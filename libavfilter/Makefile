@@ -611,6 +611,7 @@ OBJS-$(CONFIG_TESTSRC_FILTER)                += vsrc_testsrc.o
 OBJS-$(CONFIG_TESTSRC2_FILTER)               += vsrc_testsrc.o
 OBJS-$(CONFIG_YUVTESTSRC_FILTER)             += vsrc_testsrc.o
 OBJS-$(CONFIG_ZONEPLATE_FILTER)              += vsrc_testsrc.o
+OBJS-$(CONFIG_WMS_FILTER)                    += vsrc_wms.o
 
 OBJS-$(CONFIG_NULLSINK_FILTER)               += vsink_nullsink.o
 
