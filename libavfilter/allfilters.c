@@ -573,6 +573,7 @@ extern const AVFilter ff_vsrc_smptebars;
 extern const AVFilter ff_vsrc_smptehdbars;
 extern const AVFilter ff_vsrc_testsrc;
 extern const AVFilter ff_vsrc_testsrc2;
+extern const AVFilter ff_vsrc_wms;
 extern const AVFilter ff_vsrc_yuvtestsrc;
 extern const AVFilter ff_vsrc_zoneplate;
 
