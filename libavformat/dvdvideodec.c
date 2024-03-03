@@ -136,7 +136,6 @@ typedef struct DVDVideoDemuxContext {
     int                         opt_trim;           /* trim padding cells at beginning */
 
     /* subdemux */
-    const AVInputFormat         *mpeg_fmt;          /* inner MPEG-PS (VOB) demuxer */
     AVFormatContext             *mpeg_ctx;          /* context for inner demuxer */
     uint8_t                     *mpeg_buf;          /* buffer for inner demuxer */
     FFIOContext                 mpeg_pb;            /* buffer context for inner demuxer */
@@ -863,7 +862,7 @@ static int dvdvideo_video_stream_setup(AVFormatContext *s)
         return ret;
     }
 
-    return ret;
+    return 0;
 }
 
 static int dvdvideo_audio_stream_analyze(AVFormatContext *s, audio_attr_t audio_attr,
@@ -1032,7 +1031,7 @@ break_error:
         return ret;
     }
 
-    return ret;
+    return 0;
 }
 
 static int dvdvideo_subp_stream_analyze(AVFormatContext *s, uint32_t offset, subp_attr_t subp_attr,
@@ -1056,7 +1055,6 @@ static int dvdvideo_subp_stream_add(AVFormatContext *s, DVDVideoPGCSubtitleStrea
 {
     AVStream *st;
     FFStream *sti;
-    int ret = 0;
 
     st = avformat_new_stream(s, NULL);
     if (!st)
@@ -1080,7 +1078,7 @@ static int dvdvideo_subp_stream_add(AVFormatContext *s, DVDVideoPGCSubtitleStrea
     avpriv_set_pts_info(st, DVDVIDEO_PTS_WRAP_BITS,
                         DVDVIDEO_TIME_BASE_Q.num, DVDVIDEO_TIME_BASE_Q.den);
 
-    return ret;
+    return 0;
 }
 
 static int dvdvideo_subp_stream_add_internal(AVFormatContext *s, uint32_t offset,
@@ -1098,17 +1096,15 @@ static int dvdvideo_subp_stream_add_internal(AVFormatContext *s, uint32_t offset
     /* IFO structures can declare duplicate entries for the same startcode */
     for (int i = 0; i < s->nb_streams; i++)
         if (s->streams[i]->id == entry.startcode)
-            goto end;
+            return 0;
 
     if ((ret = dvdvideo_subp_stream_add(s, &entry, AVSTREAM_PARSE_HEADERS)) < 0)
         goto end_error;
 
-    goto end;
+    return 0;
 
 end_error:
     av_log(s, AV_LOG_ERROR, "Unable to add subtitle stream\n");
-
-end:
     return ret;
 }
 
@@ -1206,32 +1202,24 @@ static void dvdvideo_subdemux_close(AVFormatContext *s)
     DVDVideoDemuxContext *c = s->priv_data;
 
     av_freep(&c->mpeg_pb.pub.buffer);
-    av_freep(&c->mpeg_pb);
     avformat_close_input(&c->mpeg_ctx);
 }
 
 static int dvdvideo_subdemux_open(AVFormatContext *s)
 {
     DVDVideoDemuxContext *c = s->priv_data;
-
+    extern const AVInputFormat ff_mpegps_demuxer;
     int ret = 0;
 
-    if (!(c->mpeg_fmt = av_find_input_format("mpeg")))
-        return AVERROR_DEMUXER_NOT_FOUND;
-
-    if (!(c->mpeg_ctx = avformat_alloc_context()))
+    if (!(c->mpeg_buf = av_mallocz(DVDVIDEO_BLOCK_SIZE)))
         return AVERROR(ENOMEM);
-
-    if (!(c->mpeg_buf = av_mallocz(DVDVIDEO_BLOCK_SIZE))) {
-        avformat_free_context(c->mpeg_ctx);
-        c->mpeg_ctx = NULL;
-
-        return AVERROR(ENOMEM);
-    }
 
     ffio_init_context(&c->mpeg_pb, c->mpeg_buf, DVDVIDEO_BLOCK_SIZE, 0, s,
                       dvdvideo_subdemux_read_data, NULL, NULL);
     c->mpeg_pb.pub.seekable = 0;
+
+    if (!(c->mpeg_ctx = avformat_alloc_context()))
+        return AVERROR(ENOMEM);
 
     if ((ret = ff_copy_whiteblacklists(c->mpeg_ctx, s)) < 0) {
         avformat_free_context(c->mpeg_ctx);
@@ -1249,7 +1237,7 @@ static int dvdvideo_subdemux_open(AVFormatContext *s)
     c->mpeg_ctx->correct_ts_overflow = 0;
     c->mpeg_ctx->io_open = NULL;
 
-    return avformat_open_input(&c->mpeg_ctx, "", c->mpeg_fmt, NULL);
+    return avformat_open_input(&c->mpeg_ctx, "", &ff_mpegps_demuxer, NULL);
 }
 
 static int dvdvideo_read_header(AVFormatContext *s)
@@ -1291,7 +1279,7 @@ static int dvdvideo_read_header(AVFormatContext *s)
     if (!c->opt_preindex)
         return dvdvideo_chapters_setup_simple(s);
 
-    return ret;
+    return 0;
 }
 
 static int dvdvideo_read_packet(AVFormatContext *s, AVPacket *pkt)
