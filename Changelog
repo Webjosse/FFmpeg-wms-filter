@@ -30,6 +30,10 @@ version <next>:
 - Change the default bitrate control method from VBR to CQP for QSV encoders.
 - removed deprecated ffmpeg CLI options -psnr and -map_channel
 - DVD-Video demuxer, powered by libdvdnav and libdvdread
+- ffprobe -show_stream_groups option
+- ffprobe (with -export_side_data film_grain) now prints film grain metadata
+- AEA muxer
+
 
 version 6.1:
 - libaribcaption decoder

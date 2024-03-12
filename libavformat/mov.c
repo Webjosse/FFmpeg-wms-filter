@@ -926,6 +926,7 @@ static int mov_read_iacb(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 
     for (int i = 0; i < iamf->nb_audio_elements; i++) {
         IAMFAudioElement *audio_element = iamf->audio_elements[i];
+        const AVIAMFAudioElement *element;
         AVStreamGroup *stg =
             avformat_stream_group_create(c->fc, AV_STREAM_GROUP_PARAMS_IAMF_AUDIO_ELEMENT, NULL);
 
@@ -937,7 +938,7 @@ static int mov_read_iacb(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         av_iamf_audio_element_free(&stg->params.iamf_audio_element);
         stg->id = audio_element->audio_element_id;
         /* Transfer ownership */
-        stg->params.iamf_audio_element = audio_element->element;
+        element = stg->params.iamf_audio_element = audio_element->element;
         audio_element->element = NULL;
 
         for (int j = 0; j < audio_element->nb_substreams; j++) {
@@ -946,7 +947,7 @@ static int mov_read_iacb(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 
             if (!i && !j) {
                 if (audio_element->layers[0].substream_count != 1)
-                    st->disposition &= ~AV_DISPOSITION_DEFAULT;
+                    disposition &= ~AV_DISPOSITION_DEFAULT;
                 stream = st;
             } else
                 stream = avformat_new_stream(c->fc, NULL);
@@ -964,6 +965,8 @@ static int mov_read_iacb(MOVContext *c, AVIOContext *pb, MOVAtom atom)
                 sc->refcount++;
             }
 
+            if (element->audio_element_type == AV_IAMF_AUDIO_ELEMENT_TYPE_SCENE)
+                stream->disposition |= AV_DISPOSITION_DEPENDENT;
             if (i || j) {
                 stream->disposition |= AV_DISPOSITION_DEPENDENT;
                 if (audio_element->layers[0].substream_count == 1)
@@ -9315,6 +9318,7 @@ static int read_image_grid(AVFormatContext *s, const HEIFGrid *grid,
             if (i == tile_grid->nb_tiles)
                 return AVERROR_INVALIDDATA;
 
+            tile_grid->offsets[i].idx        = i;
             tile_grid->offsets[i].horizontal = x;
             tile_grid->offsets[i].vertical   = y;
 
@@ -9443,7 +9447,8 @@ static int mov_parse_tiles(AVFormatContext *s)
                 if (err < 0 && err != AVERROR(EEXIST))
                     return err;
 
-                st->disposition |= AV_DISPOSITION_DEPENDENT;
+                if (item->item_id != mov->primary_item_id)
+                    st->disposition |= AV_DISPOSITION_DEPENDENT;
                 break;
             }
 
@@ -10297,17 +10302,17 @@ static const AVClass mov_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-const AVInputFormat ff_mov_demuxer = {
-    .name           = "mov,mp4,m4a,3gp,3g2,mj2",
-    .long_name      = NULL_IF_CONFIG_SMALL("QuickTime / MOV"),
-    .priv_class     = &mov_class,
+const FFInputFormat ff_mov_demuxer = {
+    .p.name         = "mov,mp4,m4a,3gp,3g2,mj2",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("QuickTime / MOV"),
+    .p.priv_class   = &mov_class,
+    .p.extensions   = "mov,mp4,m4a,3gp,3g2,mj2,psp,m4b,ism,ismv,isma,f4v,avif,heic,heif",
+    .p.flags        = AVFMT_NO_BYTE_SEEK | AVFMT_SEEK_TO_PTS | AVFMT_SHOW_IDS,
     .priv_data_size = sizeof(MOVContext),
-    .extensions     = "mov,mp4,m4a,3gp,3g2,mj2,psp,m4b,ism,ismv,isma,f4v,avif,heic,heif",
     .flags_internal = FF_FMT_INIT_CLEANUP,
     .read_probe     = mov_probe,
     .read_header    = mov_read_header,
     .read_packet    = mov_read_packet,
     .read_close     = mov_read_close,
     .read_seek      = mov_read_seek,
-    .flags          = AVFMT_NO_BYTE_SEEK | AVFMT_SEEK_TO_PTS | AVFMT_SHOW_IDS,
 };

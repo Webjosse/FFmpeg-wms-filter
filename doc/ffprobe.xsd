@@ -105,8 +105,6 @@
     <xsd:attribute name="pkt_dts_time"  type="xsd:float"/>
     <xsd:attribute name="best_effort_timestamp"      type="xsd:long" />
     <xsd:attribute name="best_effort_timestamp_time" type="xsd:float" />
-    <xsd:attribute name="pkt_duration"  type="xsd:long" />
-    <xsd:attribute name="pkt_duration_time" type="xsd:float"/>
     <xsd:attribute name="duration"      type="xsd:long" />
     <xsd:attribute name="duration_time" type="xsd:float"/>
     <xsd:attribute name="pkt_pos"       type="xsd:long" />
@@ -128,8 +126,6 @@
     <xsd:attribute name="pix_fmt"                type="xsd:string"/>
     <xsd:attribute name="sample_aspect_ratio"    type="xsd:string"/>
     <xsd:attribute name="pict_type"              type="xsd:string"/>
-    <xsd:attribute name="coded_picture_number"   type="xsd:long"  />
-    <xsd:attribute name="display_picture_number" type="xsd:long"  />
     <xsd:attribute name="interlaced_frame"       type="xsd:int"   />
     <xsd:attribute name="top_field_first"        type="xsd:int"   />
     <xsd:attribute name="repeat_pict"            type="xsd:int"   />
@@ -162,11 +158,18 @@
   <xsd:complexType name="frameSideDataType">
     <xsd:sequence>
       <xsd:element name="timecodes" type="ffprobe:frameSideDataTimecodeList" minOccurs="0" maxOccurs="1"/>
+      <xsd:element name="components" type="ffprobe:frameSideDataComponentList" minOccurs="0" maxOccurs="1"/>
+      <xsd:element name="side_datum" type="ffprobe:frameSideDatumType" minOccurs="0" maxOccurs="unbounded"/>
     </xsd:sequence>
 
     <xsd:attribute name="side_data_type"              type="xsd:string"/>
     <xsd:attribute name="side_data_size"              type="xsd:int"   />
     <xsd:attribute name="timecode"                    type="xsd:string"/>
+  </xsd:complexType>
+
+  <xsd:complexType name="frameSideDatumType">
+    <xsd:attribute name="key"   type="xsd:string"/>
+    <xsd:attribute name="value" type="xsd:string"/>
   </xsd:complexType>
 
   <xsd:complexType name="frameSideDataTimecodeList">
@@ -177,6 +180,31 @@
 
   <xsd:complexType name="frameSideDataTimecodeType">
     <xsd:attribute name="value"              type="xsd:string"/>
+  </xsd:complexType>
+
+  <xsd:complexType name="frameSideDataComponentList">
+    <xsd:sequence>
+      <xsd:element name="component" type="ffprobe:frameSideDataComponentType" minOccurs="0" maxOccurs="unbounded"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:complexType name="frameSideDataComponentType">
+    <xsd:sequence>
+      <xsd:element name="pieces" type="ffprobe:frameSideDataPieceList" minOccurs="0" maxOccurs="1"/>
+      <xsd:element name="side_datum" type="ffprobe:frameSideDatumType" minOccurs="0" maxOccurs="unbounded"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:complexType name="frameSideDataPieceList">
+    <xsd:sequence>
+      <xsd:element name="piece" type="ffprobe:frameSideDataPieceType" minOccurs="0" maxOccurs="unbounded"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:complexType name="frameSideDataPieceType">
+    <xsd:sequence>
+      <xsd:element name="side_datum" type="ffprobe:frameSideDatumType" minOccurs="0" maxOccurs="unbounded"/>
+    </xsd:sequence>
   </xsd:complexType>
 
   <xsd:complexType name="subtitleType">
@@ -305,6 +333,7 @@
     <xsd:attribute name="filename"         type="xsd:string" use="required"/>
     <xsd:attribute name="nb_streams"       type="xsd:int"    use="required"/>
     <xsd:attribute name="nb_programs"      type="xsd:int"    use="required"/>
+    <xsd:attribute name="nb_stream_groups" type="xsd:int"    use="required"/>
     <xsd:attribute name="format_name"      type="xsd:string" use="required"/>
     <xsd:attribute name="format_long_name" type="xsd:string"/>
     <xsd:attribute name="start_time"       type="xsd:float"/>

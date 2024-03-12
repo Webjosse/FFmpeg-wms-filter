@@ -1889,7 +1889,7 @@ static void send_command(FilterGraph *fg, AVFilterGraph *graph,
 
 static int choose_input(const FilterGraph *fg, const FilterGraphThread *fgt)
 {
-    int nb_requests, nb_requests_max = 0;
+    int nb_requests, nb_requests_max = -1;
     int best_input = -1;
 
     for (int i = 0; i < fg->nb_inputs; i++) {
@@ -2199,7 +2199,8 @@ static int close_output(OutputFilterPriv *ofp, FilterGraphThread *fgt)
 
     fgt->eof_out[ofp->index] = 1;
 
-    return sch_filter_send(fgp->sch, fgp->sch_idx, ofp->index, NULL);
+    ret = sch_filter_send(fgp->sch, fgp->sch_idx, ofp->index, NULL);
+    return (ret == AVERROR_EOF) ? 0 : ret;
 }
 
 static int fg_output_frame(OutputFilterPriv *ofp, FilterGraphThread *fgt,
@@ -2250,19 +2251,17 @@ static int fg_output_frame(OutputFilterPriv *ofp, FilterGraphThread *fgt,
             frame_out = frame;
         }
 
-        {
-            // send the frame to consumers
-            ret = sch_filter_send(fgp->sch, fgp->sch_idx, ofp->index, frame_out);
-            if (ret < 0) {
-                av_frame_unref(frame_out);
+        // send the frame to consumers
+        ret = sch_filter_send(fgp->sch, fgp->sch_idx, ofp->index, frame_out);
+        if (ret < 0) {
+            av_frame_unref(frame_out);
 
-                if (!fgt->eof_out[ofp->index]) {
-                    fgt->eof_out[ofp->index] = 1;
-                    fgp->nb_outputs_done++;
-                }
-
-                return ret == AVERROR_EOF ? 0 : ret;
+            if (!fgt->eof_out[ofp->index]) {
+                fgt->eof_out[ofp->index] = 1;
+                fgp->nb_outputs_done++;
             }
+
+            return ret == AVERROR_EOF ? 0 : ret;
         }
 
         if (type == AVMEDIA_TYPE_VIDEO) {
@@ -2666,11 +2665,6 @@ static int send_frame(FilterGraph *fg, FilterGraphThread *fgt,
     frame->pts       = av_rescale_q(frame->pts,      frame->time_base, ifp->time_base);
     frame->duration  = av_rescale_q(frame->duration, frame->time_base, ifp->time_base);
     frame->time_base = ifp->time_base;
-#if LIBAVUTIL_VERSION_MAJOR < 59
-    AV_NOWARN_DEPRECATED(
-    frame->pkt_duration = frame->duration;
-    )
-#endif
 
     fd = frame_data(frame);
     if (!fd)

@@ -93,6 +93,7 @@
 #include "libavutil/thread.h"
 #include "decode.h"
 #include "internal.h"
+#include "lpc_functions.h"
 
 static int output_configure(AACDecContext *ac,
                             uint8_t layout_map[MAX_ELEM_ID*4][3], int tags,
@@ -468,13 +469,6 @@ static int output_configure(AACDecContext *ac,
     }
     // Try to sniff a reasonable channel order, otherwise output the
     // channels in the order the PCE declared them.
-#if FF_API_OLD_CHANNEL_LAYOUT
-FF_DISABLE_DEPRECATION_WARNINGS
-    if (avctx->request_channel_layout == AV_CH_LAYOUT_NATIVE)
-        ac->output_channel_order = CHANNEL_ORDER_CODED;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
-
     if (ac->output_channel_order == CHANNEL_ORDER_DEFAULT)
         layout = sniff_channel_order(layout_map, tags);
     for (i = 0; i < tags; i++) {
@@ -1132,8 +1126,8 @@ static av_cold void aac_static_table_init(void)
     ff_aacdec_common_init_once();
 
     // window initialization
-    AAC_RENAME(avpriv_kbd_window_init)(AAC_RENAME(aac_kbd_long_960), 4.0, 960);
-    AAC_RENAME(avpriv_kbd_window_init)(AAC_RENAME(aac_kbd_short_120), 6.0, 120);
+    AAC_RENAME(ff_kbd_window_init)(AAC_RENAME(aac_kbd_long_960), 4.0, 960);
+    AAC_RENAME(ff_kbd_window_init)(AAC_RENAME(aac_kbd_short_120), 6.0, 120);
 
 #if !USE_FIXED
     AAC_RENAME(ff_sine_window_init)(AAC_RENAME(sine_960), 960);
@@ -1141,8 +1135,8 @@ static av_cold void aac_static_table_init(void)
     AAC_RENAME(ff_init_ff_sine_windows)(9);
     ff_aac_float_common_init();
 #else
-    AAC_RENAME(avpriv_kbd_window_init)(AAC_RENAME2(aac_kbd_long_1024), 4.0, 1024);
-    AAC_RENAME(avpriv_kbd_window_init)(AAC_RENAME2(aac_kbd_short_128), 6.0, 128);
+    AAC_RENAME(ff_kbd_window_init)(AAC_RENAME2(aac_kbd_long_1024), 4.0, 1024);
+    AAC_RENAME(ff_kbd_window_init)(AAC_RENAME2(aac_kbd_short_128), 6.0, 128);
     init_sine_windows_fixed();
 #endif
 
@@ -1297,7 +1291,7 @@ static void decode_ltp(LongTermPrediction *ltp,
     int sfb;
 
     ltp->lag  = get_bits(gb, 11);
-    ltp->coef = ltp_coef[get_bits(gb, 3)];
+    ltp->coef = AAC_RENAME2(ltp_coef)[get_bits(gb, 3)];
     for (sfb = 0; sfb < FFMIN(max_sfb, MAX_LTP_LONG_SFB); sfb++)
         ltp->used[sfb] = get_bits1(gb);
 }
@@ -1610,7 +1604,7 @@ static int decode_tns(AACDecContext *ac, TemporalNoiseShaping *tns,
                     tmp2_idx = 2 * coef_compress + coef_res;
 
                     for (i = 0; i < tns->order[w][filt]; i++)
-                        tns->coef[w][filt][i] = tns_tmp2_map[tmp2_idx][get_bits(gb, coef_len)];
+                        tns->coef[w][filt][i] = AAC_RENAME2(tns_tmp2_map)[tmp2_idx][get_bits(gb, coef_len)];
                 }
             }
         }
@@ -2516,7 +2510,7 @@ static void apply_tns(INTFLOAT coef_param[1024], TemporalNoiseShaping *tns,
                 continue;
 
             // tns_decode_coef
-            AAC_RENAME(compute_lpc_coefs)(tns->coef[w][filt], order, lpc, 0, 0, 0);
+            compute_lpc_coefs(tns->coef[w][filt], order, lpc, 0, 0, 0);
 
             start = ics->swb_offset[FFMIN(bottom, mmm)];
             end   = ics->swb_offset[FFMIN(   top, mmm)];

@@ -321,6 +321,16 @@ AVStream *ff_stream_clone(AVFormatContext *dst_ctx, const AVStream *src)
     return st;
 }
 
+const char *avformat_stream_group_name(enum AVStreamGroupParamsType type)
+{
+    switch(type) {
+    case AV_STREAM_GROUP_PARAMS_IAMF_AUDIO_ELEMENT:        return "IAMF Audio Element";
+    case AV_STREAM_GROUP_PARAMS_IAMF_MIX_PRESENTATION:     return "IAMF Mix Presentation";
+    case AV_STREAM_GROUP_PARAMS_TILE_GRID:                 return "Tile Grid";
+    }
+    return NULL;
+}
+
 AVProgram *av_new_program(AVFormatContext *ac, int id)
 {
     AVProgram *program = NULL;
@@ -934,18 +944,8 @@ void ff_format_set_url(AVFormatContext *s, char *url)
 int ff_format_io_close(AVFormatContext *s, AVIOContext **pb)
 {
     int ret = 0;
-    if (*pb) {
-#if FF_API_AVFORMAT_IO_CLOSE
-FF_DISABLE_DEPRECATION_WARNINGS
-        if (s->io_close == ff_format_io_close_default || s->io_close == NULL)
-#endif
-            ret = s->io_close2(s, *pb);
-#if FF_API_AVFORMAT_IO_CLOSE
-        else
-            s->io_close(s, *pb);
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
-    }
+    if (*pb)
+        ret = s->io_close2(s, *pb);
     *pb = NULL;
     return ret;
 }
