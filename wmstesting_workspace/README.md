@@ -15,8 +15,11 @@ This folder is temporary, it contains the configurations I use to test the WMS f
 
 ## Use cases
 *(all scripts are from projet root)*
-- Create a video of 5 seconds going from Bruxelles (Belgium) to Lille (France)
+- Create a 5-second video with zoom-out in Lyon, France
 ```shell
-ffmpeg -y -f lavfi -i "wms=xref='lerp(4.3517\, 3.0638\, t/5)':yref='lerp(50.8460\, 50.6355\, t/5)':x1=xref-0.5:y1=yref-0.5:x2=xref+0.5:y2=yref+0.5:s=256x256" -t 5 -c:v libx264 wmstesting_workspace/out.mp4
+./ffmpeg \
+  -loglevel debug -y -f lavfi -i \
+  "wms=xref=45.7507:yref=4.8340:x1='xref-0.01-(t/100)':y1=yref-0.01-(t/100):x2=xref+0.01+(t/100):y2=yref+0.01+(t/100):s=256x256:layers=ortho_latest:version=1.3.0:url='https\://imagerie.data.grandlyon.com/all/wms'" \
+   -t 5 -c:v libx264 wmstesting_workspace/out.mp4 
 ```
 

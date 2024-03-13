@@ -1,6 +1,4 @@
 /*
- * Copyright (c) 2024 Josse De Oliveira
- *
  * This file is part of a patch of FFmpeg.
  *
  * This patch is distributed in the hope that it will be useful,
@@ -33,6 +31,9 @@
 
 #define SQR(a) ((a)*(a))
 
+
+enum WMSVersion { WMS_V1_0_0, WMS_V1_1_0, WMS_V1_1_1, WMS_V1_3_0 };
+
 typedef struct WMSContext {
     const AVClass *class;
     int w, h;
@@ -41,6 +42,13 @@ typedef struct WMSContext {
     AVRational frame_rate;
 	uint64_t pts;
     double end_pts;
+    char *url;
+    char *layers;
+    char *version;
+    char *service;
+
+    char *fmt_url;
+    enum WMSVersion wms_version;
 } WMSContext;
 
 typedef struct {
@@ -61,22 +69,189 @@ static const AVOption wms_options[] = {
     {"x1",          "set bbox west coords",                     OFFSET(x1_expr), AV_OPT_TYPE_STRING,     {.str="-180"},  0, 0, FLAGS },
     {"x2",          "set bbox east coords",                     OFFSET(x2_expr), AV_OPT_TYPE_STRING,     {.str="180"},  0, 0, FLAGS },
     {"y1",          "set bbox north coords",                    OFFSET(y1_expr), AV_OPT_TYPE_STRING,     {.str="-90"},  0, 0, FLAGS },
-    {"y2",          "set bbox south coords",                      OFFSET(y2_expr), AV_OPT_TYPE_STRING,     {.str="90"},  0, 0, FLAGS },
-{NULL},
+    {"y2",          "set bbox south coords",                    OFFSET(y2_expr), AV_OPT_TYPE_STRING,     {.str="90"},  0, 0, FLAGS },
+    {"y2",          "set bbox south coords",                    OFFSET(y2_expr), AV_OPT_TYPE_STRING,     {.str="90"},  0, 0, FLAGS },
+    {"url",         "set service URL without parameters",       OFFSET(url), AV_OPT_TYPE_STRING, {.str=NULL}, 0, 0, FLAGS},
+    {"layers",      "set layers parameter for WMS",             OFFSET(layers), AV_OPT_TYPE_STRING, {.str=""}, 0, 0, FLAGS},
+    {"version",     "set WMS version, should look like '1.X.X'",OFFSET(version), AV_OPT_TYPE_STRING, {.str="1.3.0"}, 0, 0, FLAGS},
+    {"service",     "set service name (default \"WMS\")",       OFFSET(service), AV_OPT_TYPE_STRING, {.str="WMS"}, 0, 0, FLAGS},
+    {NULL},
 };
 
 AVFILTER_DEFINE_CLASS(wms);
 
+
+#define WMS_REQARG_SERVICE "service=%s"
+#define WMS_REQARG_VERSION "version=%s"
+#define WMS_REQARG_REQUEST "request=%s"
+#define WMS_REQARG_LAYERS "layers=%s"
+#define WMS_REQARG_STYLES "styles=%s"
+#define WMS_REQARG_FORMAT "format=%s"
+#define WMS_REQARG_BBOX "bbox=%%lf,%%lf,%%lf,%%lf"
+#define WMS_REQARG_WIDTH "width=%d"
+#define WMS_REQARG_HEIGHT "height=%d"
+#define WMS_REQARG_SRS "srs=%s"
+#define WMS_REQARG_CRS "crs=%s"
+
+#define WMS_1_1_X_REQARGS "%s?" \
+    WMS_REQARG_SERVICE "&" WMS_REQARG_VERSION "&" WMS_REQARG_REQUEST "&" \
+    WMS_REQARG_LAYERS "&" WMS_REQARG_STYLES "&" WMS_REQARG_FORMAT "&" \
+    WMS_REQARG_BBOX "&" WMS_REQARG_WIDTH "&" WMS_REQARG_HEIGHT "&" \
+    WMS_REQARG_SRS
+
+#define WMS_1_3_0_REQARGS "%s?" \
+    WMS_REQARG_SERVICE "&" WMS_REQARG_VERSION "&" WMS_REQARG_REQUEST "&" \
+    WMS_REQARG_LAYERS "&" WMS_REQARG_STYLES "&" WMS_REQARG_FORMAT "&" \
+    WMS_REQARG_BBOX "&" WMS_REQARG_WIDTH "&" WMS_REQARG_HEIGHT "&" \
+    WMS_REQARG_CRS
+
+#define SERVICE_URL "?service=WMS&version=1.1.1&request=GetMap&layers=OSM-WMS&styles=&format=image%%2Fpng&bbox=%lf%%2C%lf%%2C%lf%%2C%lf&width=%d&height=%d&srs=EPSG%%3A4326&transparent=true"
+
+static int init_version(AVFilterContext *ctx) {
+    WMSContext *s = ctx->priv;
+    if(strcmp(s->version, "1.3.0") == 0) {
+        s->wms_version = WMS_V1_3_0;
+        return 0;
+    }
+    if(strcmp(s->version, "1.1.1") == 0) {
+        s->wms_version = WMS_V1_1_1;
+        return 0;
+    }
+    if(strcmp(s->version, "1.1.0") == 0) {
+        s->wms_version = WMS_V1_1_0;
+        return 0;
+    }
+
+    av_log(ctx, AV_LOG_ERROR,
+           "WMS version '%s' not implemented. Available versions are '1.0.0' , '1.1.0', '1.1.1' and '1.3.0'\n",
+           s->version);
+
+    return AVERROR(EINVAL);
+
+}
+
+
+
+static char* format_url_arg(char* raw_arg) {
+    #define NONEED_ESCAPE(ch) \
+        (ch >='a' && ch <= 'z') || (ch >='A' && ch <= 'Z') || \
+        (ch >='-' && ch <= '9' && ch != '/') ||(ch == '~' || ch == '_')
+
+    int dst_i = 0;
+    int ret;
+    int result_size = 1;
+    char* dst;
+    char c;
+    for (int i=0; (c=raw_arg[i]) != 0; i++) {
+        if (NONEED_ESCAPE(c)) {
+            result_size++;
+        }else {
+            result_size += 4;
+        }
+    }
+
+    dst = av_malloc(result_size);
+    dst[0] = 0;
+
+    for (int i=0; (c=raw_arg[i]) != 0; i++) {
+        if (NONEED_ESCAPE(c)) {
+            dst[dst_i] = c;
+            dst_i++;
+            dst[dst_i] = '\0';
+        }else {
+            // adds %%xx instead of special char
+            dst_i += (ret = snprintf(&dst[dst_i], 5, "%%%%%02X", (uint8_t)c));
+            if (ret < 0) return NULL;
+        }
+    }
+
+    return dst;
+}
+
+#define WMS_REQVAL_REQUEST "GetMap"
+#define WMS_REQVAL_STYLES ""
+#define WMS_REQVAL_FORMAT "image/png"
+#define WMS_REQVAL_PROJ "EPSG:4326"
+
+
+static int init_format(AVFilterContext *ctx) {
+    WMSContext *s = ctx->priv;
+
+    int ret;
+
+    //Needs escaping: service , layers
+    char *service = format_url_arg(s->service);
+    char *layers = format_url_arg(s->layers);
+
+    if (service == NULL) {
+        av_log(ctx, AV_LOG_ERROR,
+       "Could not escape 'service' URL param\n");
+        ret = EINVAL;
+        goto fail;
+    }
+
+    if (layers == NULL) {
+        av_log(ctx, AV_LOG_ERROR,
+    "Could not escape 'layers' arg for URL\n");
+        ret = EINVAL;
+        goto fail;
+    }
+
+    switch (s->wms_version) {
+        case WMS_V1_3_0:
+            s->fmt_url = av_asprintf(WMS_1_3_0_REQARGS, s->url,
+                service, s->version, WMS_REQVAL_REQUEST,
+                layers, WMS_REQVAL_STYLES, WMS_REQVAL_FORMAT,
+                s->w, s->h, WMS_REQVAL_PROJ
+                );
+            break;
+        default:
+            s->fmt_url = av_asprintf(WMS_1_1_X_REQARGS, s->url,
+                service, s->version, WMS_REQVAL_REQUEST,
+                layers, WMS_REQVAL_STYLES, WMS_REQVAL_FORMAT,
+                s->w, s->h, WMS_REQVAL_PROJ
+                );
+            break;
+    }
+
+    av_log(ctx, AV_LOG_DEBUG,"WMS URL format: %s", s->fmt_url);
+
+
+    av_free(service);
+    av_free(layers);
+
+    if (strlen(s->fmt_url) <= 0) {
+        av_log(ctx, AV_LOG_ERROR,
+       "Could not build URL\n");
+        ret = AVERROR(EIO);
+        goto fail;
+    };
+
+    return 0;
+fail:
+    av_free(service);
+    av_free(layers);
+    return ret;
+}
+
 static av_cold int init(AVFilterContext *ctx)
 {
-    //WMSContext *s = ctx->priv;
-	//do nothing
-	return 0;
+    int ret;
+    if((ret = init_version(ctx)) < 0)
+        return ret;
+
+    if((ret = init_format(ctx)) < 0)
+        return ret;
+
+
+    av_log(ctx, AV_LOG_DEBUG, "Successfully initialized WMS Context\n");
+    return 0;
 }
 
 static av_cold void uninit(AVFilterContext *ctx){
-    //WMSContext *s = ctx->priv;
-	//do nothing
+    WMSContext *s = ctx->priv;
+	av_free(s->fmt_url);
+    av_log(ctx, AV_LOG_DEBUG, "Successfully uninitialized WMS Context\n");
 }
 
 
@@ -192,11 +367,6 @@ static int get_frame(AVFrame *dst, AVFilterContext *ctx, const char* url) {
     return 0;
 }
 
-
-#define SERVICE_URL "https://ows.terrestris.de/osm/service?service=WMS&version=1.1.1&request=GetMap&layers=OSM-WMS&styles=&format=image%%2Fpng&bbox=%lf%%2C%lf%%2C%lf%%2C%lf&width=%d&height=%d&srs=EPSG%%3A4326&transparent=true"
-
-
-
 static AVMutex pts_mutex = AV_MUTEX_INITIALIZER;
 
 static int request_frame(AVFilterLink *link)
@@ -216,9 +386,9 @@ static int request_frame(AVFilterLink *link)
     if (!picref)
         return AVERROR(ENOMEM);
 
-    url = av_asprintf(SERVICE_URL,
-        mctx.x1, mctx.y1, mctx.x2, mctx.y2,
-        s->w, s->h);
+    url = av_asprintf(s->fmt_url,
+        mctx.x1, mctx.y1, mctx.x2, mctx.y2);
+
 
     if ((ret = get_frame(picref, ctx, url)))
         return ret;
