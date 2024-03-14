@@ -190,10 +190,10 @@ FATE_AFILTER_SAMPLES-$(call FILTERDEMDECENCMUX, STEREOTOOLS, WAV, PCM_S16LE, PCM
 fate-filter-stereotools: SRC = $(TARGET_SAMPLES)/audio-reference/luckynight_2ch_44kHz_s16.wav
 fate-filter-stereotools: CMD = framecrc -i $(SRC) -frames:a 20 -af aresample,stereotools=mlev=0.015625,aresample
 
-FATE_AFILTER_SAMPLES-$(call FILTERDEMDECENCMUX, TREMOLO, WAV, PCM_S16LE, PCM_S16LE, WAV) += fate-filter-tremolo
+FATE_AFILTER_SAMPLES-$(call FILTERDEMDECENCMUX, TREMOLO ATRIM, WAV, PCM_S16LE, PCM_S16LE, WAV) += fate-filter-tremolo
 fate-filter-tremolo: tests/data/asynth-44100-2.wav
 fate-filter-tremolo: SRC = $(TARGET_PATH)/tests/data/asynth-44100-2.wav
-fate-filter-tremolo: CMD = ffmpeg -auto_conversion_filters -i $(SRC) -frames:a 20 -af tremolo -f wav -f s16le -
+fate-filter-tremolo: CMD = ffmpeg -auto_conversion_filters -i $(SRC) -af tremolo,atrim=end_sample=20480 -f wav -f s16le -
 fate-filter-tremolo: REF = $(SAMPLES)/filter/tremolo.pcm
 fate-filter-tremolo: CMP = oneoff
 fate-filter-tremolo: CMP_UNIT = s16
@@ -229,17 +229,17 @@ fate-filter-hls-append: tests/data/hls-list-append.m3u8
 fate-filter-hls-append: CMD = framecrc -flags +bitexact -i $(TARGET_PATH)/tests/data/hls-list-append.m3u8 -af asetpts=N*23,aresample
 
 FATE_AMIX += fate-filter-amix-simple
-fate-filter-amix-simple: CMD = ffmpeg -auto_conversion_filters -filter_complex amix -i $(SRC) -ss 3 -i $(SRC1) -f f32le -
+fate-filter-amix-simple: CMD = ffmpeg -auto_conversion_filters -filter_complex amix -max_size 4096 -i $(SRC) -ss 3 -max_size 4096 -i $(SRC1) -f f32le -
 fate-filter-amix-simple: REF = $(SAMPLES)/filter/amix_simple.pcm
 
 FATE_AMIX += fate-filter-amix-first
-fate-filter-amix-first: CMD = ffmpeg -auto_conversion_filters -filter_complex amix=duration=first -ss 4 -i $(SRC) -i $(SRC1) -f f32le -
+fate-filter-amix-first: CMD = ffmpeg -auto_conversion_filters -filter_complex amix=duration=first -ss 4 -max_size 4096 -i $(SRC) -max_size 4096 -i $(SRC1) -f f32le -
 fate-filter-amix-first: REF = $(SAMPLES)/filter/amix_first.pcm
 
 FATE_AMIX += fate-filter-amix-transition
 fate-filter-amix-transition: tests/data/asynth-44100-2-3.wav
 fate-filter-amix-transition: SRC2 = $(TARGET_PATH)/tests/data/asynth-44100-2-3.wav
-fate-filter-amix-transition: CMD = ffmpeg -auto_conversion_filters -filter_complex amix=inputs=3:dropout_transition=0.5 -i $(SRC) -ss 2 -i $(SRC1) -ss 4 -i $(SRC2) -f f32le -
+fate-filter-amix-transition: CMD = ffmpeg -auto_conversion_filters -filter_complex amix=inputs=3:dropout_transition=0.5 -max_size 4096 -i $(SRC) -ss 2 -max_size 4096 -i $(SRC1) -ss 4 -max_size 4096 -i $(SRC2) -f f32le -
 fate-filter-amix-transition: REF = $(SAMPLES)/filter/amix_transition.pcm
 
 FATE_AFILTER_SAMPLES-$(call FILTERDEMDECENCMUX, AMIX, WAV, PCM_S16LE, PCM_F32LE, PCM_F32LE) += $(FATE_AMIX)
@@ -306,10 +306,10 @@ fate-filter-channelmap-one-str: REF = 0ea3052e482c95d5d3bd9da6dac1b5fa
 
 FATE_AFILTER-$(call FILTERDEMDECENCMUX, CHANNELMAP, WAV, PCM_S16LE, PCM_S16LE, WAV) += $(FATE_FILTER_CHANNELMAP)
 
-FATE_AFILTER-$(call FILTERDEMDECENCMUX, CHANNELSPLIT, WAV, PCM_S16LE, PCM_S16LE, PCM_S16LE) += fate-filter-channelsplit
+FATE_AFILTER-$(call FILTERDEMDECENCMUX, CHANNELSPLIT ASETNSAMPLES, WAV, PCM_S16LE, PCM_S16LE, PCM_S16LE) += fate-filter-channelsplit
 fate-filter-channelsplit: SRC = $(TARGET_PATH)/tests/data/asynth-44100-2.wav
 fate-filter-channelsplit: tests/data/asynth-44100-2.wav
-fate-filter-channelsplit: CMD = md5 -auto_conversion_filters -i $(SRC) -filter_complex channelsplit -f s16le
+fate-filter-channelsplit: CMD = md5 -auto_conversion_filters -i $(SRC) -filter_complex asetnsamples=n=1024:p=0,channelsplit -f s16le
 fate-filter-channelsplit: CMP = oneline
 fate-filter-channelsplit: REF = d92988d0fe2dd92236763f47b07ab597
 
