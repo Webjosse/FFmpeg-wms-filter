@@ -37,7 +37,6 @@
 
 #define SQR(a) ((a)*(a))
 
-
 enum WMSVersion { WMS_V1_0_0, WMS_V1_1_0, WMS_V1_1_1, WMS_V1_3_0 };
 
 typedef struct WMSContext {
@@ -170,7 +169,7 @@ static int read_xml(AVFilterContext *ctx) {
     WMSContext *s = ctx->priv;
     AVIOContext *io_ctx = NULL;
     int ret;
-    struct AVBPrint buf;
+    AVBPrint buf;
     xmlDocPtr doc = NULL;
     char *url = prepare_capabilities_url(s->capabilities_url);
     ret = avio_open2(&io_ctx, url, AVIO_FLAG_READ, NULL, NULL);
@@ -182,7 +181,6 @@ static int read_xml(AVFilterContext *ctx) {
     // Must read all the XML to parse it
     av_bprint_init(&buf, 0, INT_MAX);
     avio_read_to_bprint(io_ctx, &buf, INT_MAX);
-
 
     doc = xmlReadMemory(buf.str, buf.len, url, NULL, 0);
     if (doc == NULL) {
@@ -250,8 +248,6 @@ static int init_version(AVFilterContext *ctx) {
     return AVERROR(EINVAL);
 
 }
-
-
 
 static char* format_url_arg(char* raw_arg) {
     #define NONEED_ESCAPE(ch) \
@@ -453,7 +449,6 @@ static int config_props(AVFilterLink *outlink)
     outlink->frame_rate = s->frame_rate;
     return 0;
 }
-
 
 static int get_frame(AVFrame *dst, AVFilterContext *ctx, const char* url) {
     int ret;
