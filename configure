@@ -304,7 +304,7 @@ External library support:
   --enable-libxvid         enable Xvid encoding via xvidcore,
                            native MPEG-4/Xvid encoder exists [no]
   --enable-libxml2         enable XML parsing using the C library libxml2, needed
-                           for dash and imf demuxing support [no]
+                           for dash and imf demuxing support and for wms filter [no]
   --enable-libzimg         enable z.lib, needed for zscale filter [no]
   --enable-libzmq          enable message passing via libzmq [no]
   --enable-libzvbi         enable teletext support via libzvbi [no]
@@ -3866,6 +3866,7 @@ vaguedenoiser_filter_deps="gpl"
 vflip_vulkan_filter_deps="vulkan spirv_compiler"
 vidstabdetect_filter_deps="libvidstab"
 vidstabtransform_filter_deps="libvidstab"
+wms_filter_deps="libxml2 openssl"
 libvmaf_filter_deps="libvmaf"
 libvmaf_cuda_filter_deps="libvmaf libvmaf_cuda ffnvcodec"
 zmq_filter_deps="libzmq"
