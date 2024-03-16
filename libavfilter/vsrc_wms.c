@@ -15,16 +15,22 @@
  * WMS renderer
  */
 #include <math.h>
-#include "libavutil/eval.h"
-#include "libavutil/thread.h"
+
+#include <libxml/tree.h>
+#include <libxml/parser.h>
+#include <libxml/xmlschemastypes.h>
+#include <libxml/xmlmemory.h>
+#include <libxml/xmlstring.h>
+#include <libxml/globals.h>
 
 #include "avfilter.h"
 #include "internal.h"
-
 #include "lavfutils.h"
 #include "libavcodec/avcodec.h"
 #include "libavformat/avformat.h"
-
+#include "libavutil/bprint.h"
+#include "libavutil/eval.h"
+#include "libavutil/thread.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/opt.h"
 #include "libavutil/avstring.h"
@@ -42,11 +48,11 @@ typedef struct WMSContext {
     AVRational frame_rate;
 	uint64_t pts;
     double end_pts;
+    char *capabilities_url;
     char *url;
     char *layers;
     char *version;
     char *service;
-
     char *fmt_url;
     enum WMSVersion wms_version;
 } WMSContext;
@@ -71,15 +77,132 @@ static const AVOption wms_options[] = {
     {"y1",          "set bbox north coords",                    OFFSET(y1_expr), AV_OPT_TYPE_STRING,     {.str="-90"},  0, 0, FLAGS },
     {"y2",          "set bbox south coords",                    OFFSET(y2_expr), AV_OPT_TYPE_STRING,     {.str="90"},  0, 0, FLAGS },
     {"y2",          "set bbox south coords",                    OFFSET(y2_expr), AV_OPT_TYPE_STRING,     {.str="90"},  0, 0, FLAGS },
-    {"url",         "set service URL without parameters",       OFFSET(url), AV_OPT_TYPE_STRING, {.str=NULL}, 0, 0, FLAGS},
+    {"url",         "set service URL without parameters",       OFFSET(capabilities_url), AV_OPT_TYPE_STRING, {.str=NULL}, 0, 0, FLAGS},
     {"layers",      "set layers parameter for WMS",             OFFSET(layers), AV_OPT_TYPE_STRING, {.str=""}, 0, 0, FLAGS},
-    {"version",     "set WMS version, should look like '1.X.X'",OFFSET(version), AV_OPT_TYPE_STRING, {.str="1.3.0"}, 0, 0, FLAGS},
-    {"service",     "set service name (default \"WMS\")",       OFFSET(service), AV_OPT_TYPE_STRING, {.str="WMS"}, 0, 0, FLAGS},
     {NULL},
 };
 
 AVFILTER_DEFINE_CLASS(wms);
 
+static xmlNodePtr find_child_xml(xmlNodePtr node,const char* name) {
+    xmlNodePtr search;
+    if(node == NULL) return NULL;
+    for(search = node->children;
+        search && xmlStrcasecmp(search->name, (xmlChar *)name) != 0;
+        search = search->next) {
+    }
+    return search;
+}
+
+static int parse_xml(const xmlDocPtr doc, AVFilterContext *ctx) {
+    WMSContext *s = ctx->priv;
+    xmlNodePtr nodeptr, serviceptr, getmapptr;
+    xmlChar *version, *url;
+
+    nodeptr = xmlDocGetRootElement(doc);
+    if (nodeptr == NULL) {
+        av_log(ctx, AV_LOG_ERROR, "Error reading XML root\n");
+        return AVERROR(EIO);
+    }
+
+    version = xmlGetProp(nodeptr, (const xmlChar *)"version");
+    if(version == NULL) {
+        av_log(ctx, AV_LOG_ERROR, "Could not read version\n");
+        return AVERROR(EINVAL);
+    }
+    s->version = (char *)xmlStrdup(version);
+    xmlFree(version);
+
+    serviceptr = find_child_xml(nodeptr, "Service");
+    if(serviceptr == NULL) {
+        av_log(ctx, AV_LOG_ERROR, "Could not find Service node in GetCapabilities XML\n");
+        return AVERROR(EINVAL);
+    }
+
+    nodeptr = find_child_xml(nodeptr, "Capability");
+    nodeptr = find_child_xml(nodeptr, "Request");
+    getmapptr = nodeptr = find_child_xml(nodeptr, "GetMap");
+    if(getmapptr == NULL) {
+        av_log(ctx, AV_LOG_ERROR, "Could not find GetMap node in GetCapabilities XML\n");
+        return AVERROR(EINVAL);
+    }
+
+    nodeptr = find_child_xml(serviceptr, "Name");
+    if(nodeptr == NULL || nodeptr->children == NULL || nodeptr->children->content == NULL) {
+        av_log(ctx, AV_LOG_WARNING, "Could not read service name, using 'WMS'\n");
+        s->service = strdup("WMS");
+    }else {
+        s->service = (char *)xmlStrdup(serviceptr->children->content);
+    }
+
+    nodeptr = find_child_xml(getmapptr, "DCPType");
+    nodeptr = find_child_xml(nodeptr, "HTTP");
+    nodeptr = find_child_xml(nodeptr, "Get");
+    nodeptr = find_child_xml(nodeptr, "OnlineResource");
+    if(nodeptr == NULL) {
+        av_log(ctx, AV_LOG_ERROR, "Could not read OnlineResource node\n");
+        return AVERROR(EINVAL);
+    }
+    url = xmlGetNsProp(nodeptr, "href", "xlink");
+    if(url == NULL) {
+        av_log(ctx, AV_LOG_WARNING, "Could not read URL property for GetMap, using the same as GetCapabilities\n");
+        s->url = strdup(s->capabilities_url);
+    }else {
+        s->url = (char *)xmlStrdup(url);
+        xmlFree(url);
+    }
+    return 0;
+}
+
+static char* prepare_capabilities_url(char *opt_capurl) {
+    char tmp, *lastchr, *url;
+    //Clean URL: remove # and ?
+    #define IS_CLEANURL(ch) ch!=0 & ch!='?' && ch!='#'
+    for(lastchr= opt_capurl; IS_CLEANURL(*lastchr); lastchr++){}
+    tmp = *lastchr;
+    *lastchr = 0;
+    url = av_asprintf("%s?request=GetCapabilities", opt_capurl);
+    *lastchr = tmp;
+    return url;
+}
+
+static int read_xml(AVFilterContext *ctx) {
+    WMSContext *s = ctx->priv;
+    AVIOContext *io_ctx = NULL;
+    int ret;
+    struct AVBPrint buf;
+    xmlDocPtr doc = NULL;
+    char *url = prepare_capabilities_url(s->capabilities_url);
+    ret = avio_open2(&io_ctx, url, AVIO_FLAG_READ, NULL, NULL);
+    if (ret < 0) {
+        av_log(ctx, AV_LOG_ERROR, "Error opening GetCapabilities URL: %s\n", av_err2str(ret));
+        goto end;
+    }
+
+    // Must read all the XML to parse it
+    av_bprint_init(&buf, 0, INT_MAX);
+    avio_read_to_bprint(io_ctx, &buf, INT_MAX);
+
+
+    doc = xmlReadMemory(buf.str, buf.len, url, NULL, 0);
+    if (doc == NULL) {
+        av_log(ctx, AV_LOG_ERROR, "Error reading XML file\n");
+        ret = EIO;
+    }
+
+    ret = parse_xml(doc, ctx);
+end:
+    avio_close(io_ctx);
+    av_bprint_finalize(&buf, NULL);
+    av_free(url);
+    xmlFreeDoc(doc);
+    xmlCleanupParser();
+    return ret;
+}
+
+static int parse_getcapabilities(AVFilterContext *ctx) {
+    return read_xml(ctx);
+}
 
 #define WMS_REQARG_SERVICE "service=%s"
 #define WMS_REQARG_VERSION "version=%s"
@@ -104,8 +227,6 @@ AVFILTER_DEFINE_CLASS(wms);
     WMS_REQARG_LAYERS "&" WMS_REQARG_STYLES "&" WMS_REQARG_FORMAT "&" \
     WMS_REQARG_BBOX "&" WMS_REQARG_WIDTH "&" WMS_REQARG_HEIGHT "&" \
     WMS_REQARG_CRS
-
-#define SERVICE_URL "?service=WMS&version=1.1.1&request=GetMap&layers=OSM-WMS&styles=&format=image%%2Fpng&bbox=%lf%%2C%lf%%2C%lf%%2C%lf&width=%d&height=%d&srs=EPSG%%3A4326&transparent=true"
 
 static int init_version(AVFilterContext *ctx) {
     WMSContext *s = ctx->priv;
@@ -160,11 +281,11 @@ static char* format_url_arg(char* raw_arg) {
             dst[dst_i] = '\0';
         }else {
             // adds %%xx instead of special char
-            dst_i += (ret = snprintf(&dst[dst_i], 5, "%%%%%02X", (uint8_t)c));
+            ret = snprintf(&dst[dst_i], 5, "%%%%%02X", (uint8_t)c);
             if (ret < 0) return NULL;
+            if(ret < 4){ dst_i += ret; }else{ dst_i += 4; }
         }
     }
-
     return dst;
 }
 
@@ -173,12 +294,10 @@ static char* format_url_arg(char* raw_arg) {
 #define WMS_REQVAL_FORMAT "image/png"
 #define WMS_REQVAL_PROJ "EPSG:4326"
 
-
 static int init_format(AVFilterContext *ctx) {
     WMSContext *s = ctx->priv;
 
     int ret;
-
     //Needs escaping: service , layers
     char *service = format_url_arg(s->service);
     char *layers = format_url_arg(s->layers);
@@ -215,8 +334,6 @@ static int init_format(AVFilterContext *ctx) {
     }
 
     av_log(ctx, AV_LOG_DEBUG,"WMS URL format: %s", s->fmt_url);
-
-
     av_free(service);
     av_free(layers);
 
@@ -226,7 +343,6 @@ static int init_format(AVFilterContext *ctx) {
         ret = AVERROR(EIO);
         goto fail;
     };
-
     return 0;
 fail:
     av_free(service);
@@ -237,12 +353,13 @@ fail:
 static av_cold int init(AVFilterContext *ctx)
 {
     int ret;
+
+    if ((ret=parse_getcapabilities(ctx))<0)
+        return ret;
     if((ret = init_version(ctx)) < 0)
         return ret;
-
     if((ret = init_format(ctx)) < 0)
         return ret;
-
 
     av_log(ctx, AV_LOG_DEBUG, "Successfully initialized WMS Context\n");
     return 0;
@@ -250,12 +367,12 @@ static av_cold int init(AVFilterContext *ctx)
 
 static av_cold void uninit(AVFilterContext *ctx){
     WMSContext *s = ctx->priv;
+    free(s->url);
+	free(s->service);
+	free(s->version);
 	av_free(s->fmt_url);
     av_log(ctx, AV_LOG_DEBUG, "Successfully uninitialized WMS Context\n");
 }
-
-
-
 
 static const char *const var_names[] = {
     "xref", "yref", //reference
@@ -279,7 +396,6 @@ static int parse_expressions(MapReadContext *mapctx, AVFilterLink *outlink) {
     AVFilterContext *ctx = outlink->src;
     WMSContext *s = ctx->priv;
     int ret;
-
     double var_values[VARS_NB], res;
     char *expr;
 
@@ -291,47 +407,32 @@ static int parse_expressions(MapReadContext *mapctx, AVFilterLink *outlink) {
     var_values[VAR_Y2] = NAN;
     var_values[VAR_T] = s->pts * av_q2d(outlink->time_base);
 
-
-    if ((ret = av_expr_parse_and_eval(&res, (expr = s->xref_expr),
-                                          var_names, var_values,
+    if ((ret = av_expr_parse_and_eval(&res, (expr = s->xref_expr),var_names, var_values,
                                           NULL, NULL, NULL, NULL, NULL, 0, ctx)) < 0)
         goto fail;
     var_values[VAR_XREF] = res;
-
-    if ((ret = av_expr_parse_and_eval(&res, (expr = s->yref_expr),
-                                          var_names, var_values,
+    if ((ret = av_expr_parse_and_eval(&res, (expr = s->yref_expr),var_names, var_values,
                                           NULL, NULL, NULL, NULL, NULL, 0, ctx)) < 0)
         goto fail;
     var_values[VAR_YREF] = res;
-
-
     if ((ret = av_expr_parse_and_eval(&res, (expr = s->x1_expr),
                                               var_names, var_values,
                                               NULL, NULL, NULL, NULL, NULL, 0, ctx)) < 0)
         goto fail;
     mapctx->x1 = var_values[VAR_X1] = res;
-
-    if ((ret = av_expr_parse_and_eval(&res, (expr = s->x2_expr),
-                                              var_names, var_values,
+    if ((ret = av_expr_parse_and_eval(&res, (expr = s->x2_expr),var_names, var_values,
                                               NULL, NULL, NULL, NULL, NULL, 0, ctx)) < 0)
         goto fail;
     mapctx->x2 = var_values[VAR_X2] = res;
-
-
-    if ((ret = av_expr_parse_and_eval(&res, (expr = s->y1_expr),
-                                              var_names, var_values,
+    if ((ret = av_expr_parse_and_eval(&res, (expr = s->y1_expr),var_names, var_values,
                                               NULL, NULL, NULL, NULL, NULL, 0, ctx)) < 0)
         goto fail;
     mapctx->y1 = var_values[VAR_Y1] = res;
-
-    if ((ret = av_expr_parse_and_eval(&res, (expr = s->y2_expr),
-                                              var_names, var_values,
+    if ((ret = av_expr_parse_and_eval(&res, (expr = s->y2_expr),var_names, var_values,
                                               NULL, NULL, NULL, NULL, NULL, 0, ctx)) < 0)
         goto fail;
     mapctx->y2 = var_values[VAR_Y2] = res;
-
     return 0;
-
 fail:
     av_log(ctx, AV_LOG_ERROR,
            "Error when evaluating the expression '%s'.\n",
@@ -343,7 +444,6 @@ static int config_props(AVFilterLink *outlink)
 {
     AVFilterContext *ctx = outlink->src;
     WMSContext *s = ctx->priv;
-
     if (av_image_check_size(s->w, s->h, 0, ctx) < 0)
         return AVERROR(EINVAL);
 
@@ -351,15 +451,12 @@ static int config_props(AVFilterLink *outlink)
     outlink->h = s->h;
     outlink->time_base = av_inv_q(s->frame_rate);
     outlink->frame_rate = s->frame_rate;
-
     return 0;
 }
 
 
 static int get_frame(AVFrame *dst, AVFilterContext *ctx, const char* url) {
-
     int ret;
-
     if ((ret = ff_load_image(dst->data, dst->linesize,
                             &dst->width, &dst->height,
                             &dst->format, url, ctx)) < 0)
@@ -381,14 +478,12 @@ static int request_frame(AVFilterLink *link)
     if((ret =parse_expressions(&mctx, link) < 0))
         return ret;
 
-
     picref = av_frame_alloc();
     if (!picref)
         return AVERROR(ENOMEM);
 
     url = av_asprintf(s->fmt_url,
         mctx.x1, mctx.y1, mctx.x2, mctx.y2);
-
 
     if ((ret = get_frame(picref, ctx, url)))
         return ret;
