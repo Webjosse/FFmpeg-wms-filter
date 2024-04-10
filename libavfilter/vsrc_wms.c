@@ -290,6 +290,73 @@ static char* format_url_arg(char* raw_arg) {
 #define WMS_REQVAL_FORMAT "image/png"
 #define WMS_REQVAL_PROJ "EPSG:4326"
 
+/**
+ *
+ * @return -1 if an error occurs, 0 if format has been forced, else 1
+ */
+static int init_format_force(AVFilterContext *ctx){
+    char *src_c, *dst_c;
+    uint8_t force_flag;
+    int url_length;
+    WMSContext *s = ctx->priv;
+
+    if( s->capabilities_url == NULL ){
+        av_log(ctx, AV_LOG_ERROR, "'url' is needed\n" );
+        return -1;
+    }
+    if(s->capabilities_url[0] == '%'){
+        force_flag = 0;
+        url_length = 1;
+        for(src_c = s->capabilities_url+1; *src_c != 0; src_c++){
+            url_length++;
+            if (*src_c == '%' || *src_c == '{') url_length++;
+        }
+        s->fmt_url = av_malloc(url_length++);
+        src_c = 1+s->capabilities_url;
+        dst_c = s->fmt_url;
+        while( *src_c != '\0' ){
+            *dst_c = *src_c;
+            // Repeat %
+            if(*src_c == '%'){
+                dst_c++;
+                *dst_c = *src_c;
+            }
+            #define WMS_FORCEURL_X1FLAG (1<<0)
+            #define WMS_FORCEURL_Y1FLAG (1<<1)
+            #define WMS_FORCEURL_X2FLAG (1<<2)
+            #define WMS_FORCEURL_Y2FLAG (1<<3)
+
+            if(*src_c == '{'){
+                if(strncmp(src_c,"{x1}",4) == 0){
+                    memcpy(dst_c, "%1$lf", 5); src_c += 3; dst_c += 4;
+                    force_flag |= WMS_FORCEURL_X1FLAG;
+                }
+                if(strncmp(src_c,"{y1}",4) == 0){
+                    memcpy(dst_c, "%2$lf", 5); src_c += 3; dst_c += 4;
+                    force_flag |= WMS_FORCEURL_Y1FLAG;
+                }
+                if(strncmp(src_c,"{x2}",4) == 0){
+                    memcpy(dst_c, "%3$lf", 5); src_c += 3; dst_c += 4;
+                    force_flag |= WMS_FORCEURL_X2FLAG;
+                }
+                if(strncmp(src_c,"{y2}",4) == 0){
+                    memcpy(dst_c, "%4$lf", 5); src_c += 3; dst_c += 4;
+                    force_flag |= WMS_FORCEURL_Y2FLAG;
+                }
+            }
+            src_c++;
+            dst_c++;
+        }
+        *dst_c = *src_c;
+        if (force_flag !=  15){
+            av_log(ctx, AV_LOG_ERROR, "Forced URL should contain '{x1}', '{y1}', '{x2}' and '{y2}'\n" );
+            return -1;
+        }
+        return 0;
+    }
+    return 1;
+}
+
 static int init_format(AVFilterContext *ctx) {
     WMSContext *s = ctx->priv;
 
@@ -338,7 +405,7 @@ static int init_format(AVFilterContext *ctx) {
        "Could not build URL\n");
         ret = AVERROR(EIO);
         goto fail;
-    };
+    }
     return 0;
 fail:
     av_free(service);
@@ -350,6 +417,13 @@ static av_cold int init(AVFilterContext *ctx)
 {
     int ret;
 
+    if((ret = init_format_force(ctx)) < 0)
+        return ret;
+    if(ret == 0) {
+        av_log(ctx, AV_LOG_DEBUG, "Forcing url format: %s\n", ((WMSContext*) ctx->priv)->fmt_url);
+        return 0;
+    }
+
     if ((ret=parse_getcapabilities(ctx))<0)
         return ret;
     if((ret = init_version(ctx)) < 0)
@@ -357,7 +431,7 @@ static av_cold int init(AVFilterContext *ctx)
     if((ret = init_format(ctx)) < 0)
         return ret;
 
-    av_log(ctx, AV_LOG_DEBUG, "Successfully initialized WMS Context\n");
+    av_log(ctx, AV_LOG_DEBUG, "Successfully initialized WMS Context from GetCapabilities\n");
     return 0;
 }
 
@@ -486,8 +560,8 @@ static int request_frame(AVFilterLink *link)
     picref->duration = 1;
     ff_mutex_lock(&pts_mutex);
     picref->pts = s->pts++;
-    av_log(s, AV_LOG_INFO, "Draw from pts: %ld [(%lf %lf), (%lf %lf)]\r\n", s->pts, mctx.x1, mctx.y1, mctx.x2, mctx.y2);
-    av_log(s, AV_LOG_INFO, "Used url: %s\r\n", url);
+    av_log(s, AV_LOG_DEBUG, "Draw from pts: %ld [(%lf %lf), (%lf %lf)]\n", s->pts, mctx.x1, mctx.y1, mctx.x2, mctx.y2);
+    av_log(s, AV_LOG_DEBUG, "Used url: %s\r\n", url);
     ff_mutex_unlock(&pts_mutex);
     av_free(url);
 
